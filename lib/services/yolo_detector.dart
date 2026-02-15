@@ -49,7 +49,7 @@ class YoloDetector {
 
     _interpreter!.run(input, output);
 
-    return _parseOutput(output, image.width.toDouble(), image.height.toDouble());
+    return _parseOutput(output);
   }
 
   Float32List _imageToFloat32(img.Image image) {
@@ -66,12 +66,14 @@ class YoloDetector {
     return buffer;
   }
 
-  DetectionResult? _parseOutput(
-      dynamic output, double origWidth, double origHeight) {
+  /// Parses model output. Coordinates are kept normalized (0-1) so they can
+  /// be scaled to any image resolution (stream preview or captured photo).
+  DetectionResult? _parseOutput(dynamic output) {
     // This parsing logic should be adapted to your specific YOLOv8 model output
     // format. Below is a common layout for a 4-corner document detector.
     //
-    // The model is expected to output normalized coordinates (0-1).
+    // The model outputs normalized coordinates (0-1).
+    // We store them as normalized so they can be applied to any resolution.
     // We find the detection with the highest confidence.
 
     try {
@@ -88,10 +90,10 @@ class YoloDetector {
 
         bestConf = confidence;
         bestResult = DetectionResult(
-          topLeft: Offset(d[0] * origWidth, d[1] * origHeight),
-          topRight: Offset(d[2] * origWidth, d[3] * origHeight),
-          bottomRight: Offset(d[4] * origWidth, d[5] * origHeight),
-          bottomLeft: Offset(d[6] * origWidth, d[7] * origHeight),
+          topLeft: Offset(d[0], d[1]),
+          topRight: Offset(d[2], d[3]),
+          bottomRight: Offset(d[4], d[5]),
+          bottomLeft: Offset(d[6], d[7]),
           confidence: confidence,
         );
       }

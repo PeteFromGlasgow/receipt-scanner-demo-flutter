@@ -141,33 +141,63 @@ class _CameraScreenState extends State<CameraScreen> {
     }
 
     setState(() => _statusMessage = 'Capturing...');
+    final debugLog = StringBuffer();
 
     try {
-      // Stop the image stream before taking a picture.
+      // Step 1: Stop the image stream before taking a picture.
+      debugLog.writeln('[Step 1] Stopping image stream');
       await _cameraController!.stopImageStream();
 
+      // Step 2: Capture photo.
+      debugLog.writeln('[Step 2] Taking picture...');
       final xFile = await _cameraController!.takePicture();
       final bytes = await xFile.readAsBytes();
+      debugLog.writeln('[Step 2] Captured ${bytes.length} bytes');
+
+      // Step 3: Decode captured image.
+      debugLog.writeln('[Step 3] Decoding image...');
       final capturedImage = img.decodeImage(bytes);
 
       if (capturedImage == null) {
+        debugLog.writeln('[Step 3] FAILED: decodeImage returned null');
         setState(() => _statusMessage = 'Failed to decode captured image');
         _cameraController!.startImageStream(_processFrame);
         return;
       }
+      debugLog.writeln(
+          '[Step 3] Decoded: ${capturedImage.width}x${capturedImage.height}');
 
       img.Image croppedImage;
 
+      // Step 4: Crop or pass through.
       if (_currentDetection != null && _currentDetection!.isValid) {
-        // Use cubic polynomial cropping with detected corners.
+        debugLog.writeln('[Step 4] Detection available:');
+        debugLog.writeln('  Confidence: '
+            '${(_currentDetection!.confidence * 100).toStringAsFixed(1)}%');
+        debugLog.writeln('  Corners (normalized): '
+            '${_currentDetection!.corners}');
+
+        final scaled = _currentDetection!.scaleToImage(
+          capturedImage.width.toDouble(),
+          capturedImage.height.toDouble(),
+        );
+        debugLog.writeln('  Corners (scaled to capture): ${scaled.corners}');
+
+        debugLog.writeln('[Step 4] Running cubic polynomial crop...');
         croppedImage = CubicPolynomialCropper.crop(
           capturedImage,
           _currentDetection!,
         );
+        debugLog.writeln(
+            '[Step 4] Cropped result: ${croppedImage.width}x${croppedImage.height}');
       } else {
-        // No detection — just use the full image.
+        debugLog.writeln('[Step 4] No valid detection — using full image');
+        debugLog.writeln('  Detection: $_currentDetection');
         croppedImage = capturedImage;
       }
+
+      debugLog.writeln('[Step 5] Navigating to result screen');
+      print(debugLog.toString());
 
       if (mounted) {
         Navigator.of(context).push(
@@ -176,6 +206,7 @@ class _CameraScreenState extends State<CameraScreen> {
               original: capturedImage,
               cropped: croppedImage,
               detection: _currentDetection,
+              debugLog: debugLog.toString(),
             ),
           ),
         ).then((_) {
@@ -188,7 +219,10 @@ class _CameraScreenState extends State<CameraScreen> {
           }
         });
       }
-    } catch (e) {
+    } catch (e, stack) {
+      debugLog.writeln('[ERROR] Capture error: $e');
+      debugLog.writeln(stack.toString());
+      print(debugLog.toString());
       setState(() => _statusMessage = 'Capture error: $e');
       if (_cameraController != null &&
           _cameraController!.value.isInitialized) {

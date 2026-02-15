@@ -12,10 +12,14 @@ class EdgeOverlayPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (detection == null || !detection!.isValid) return;
 
+    // Detection corners are normalized (0-1). Scale to canvas size,
+    // then adjust for the imageSize-to-canvas aspect ratio.
     final scaleX = size.width / imageSize.width;
     final scaleY = size.height / imageSize.height;
 
-    Offset scale(Offset pt) => Offset(pt.dx * scaleX, pt.dy * scaleY);
+    // Corners are normalized (0-1), so multiply by imageSize first, then by scale.
+    Offset scale(Offset pt) =>
+        Offset(pt.dx * imageSize.width * scaleX, pt.dy * imageSize.height * scaleY);
 
     final corners = detection!.corners.map(scale).toList();
 
