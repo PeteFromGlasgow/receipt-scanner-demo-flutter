@@ -215,7 +215,7 @@ class _CameraScreenState extends State<CameraScreen> {
         fit: StackFit.expand,
         children: [
           if (_isCameraReady && _cameraController != null)
-            CameraPreview(controller: _cameraController!)
+            CameraPreview(_cameraController!)
           else
             const Center(child: CircularProgressIndicator()),
           if (_isCameraReady && _cameraController != null)
