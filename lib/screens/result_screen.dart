@@ -12,6 +12,7 @@ class ResultScreen extends StatelessWidget {
   final img.Image cropped;
   final DetectionResult? detection;
   final String? debugLog;
+  final String detectorMethod;
 
   const ResultScreen({
     super.key,
@@ -19,6 +20,7 @@ class ResultScreen extends StatelessWidget {
     required this.cropped,
     this.detection,
     this.debugLog,
+    this.detectorMethod = 'Unknown',
   });
 
   Uint8List _encodeImage(img.Image image) {
@@ -97,7 +99,7 @@ class ResultScreen extends StatelessWidget {
                       const SizedBox(height: 8),
                       Text(
                           'Confidence: ${(detection!.confidence * 100).toStringAsFixed(1)}%'),
-                      Text('Method: YOLOv8 + Cubic Polynomial'),
+                      Text('Method: $detectorMethod + Cubic Polynomial'),
                       Text(
                           'Original: ${original.width}x${original.height}'),
                       Text(

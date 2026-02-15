@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:permission_handler/permission_handler.dart';
 import '../models/detection_result.dart';
+import '../services/edge_detector.dart';
 import '../services/yolo_detector.dart';
 import '../utils/cubic_polynomial_cropper.dart';
 import '../widgets/edge_overlay_painter.dart';
@@ -18,7 +19,9 @@ class CameraScreen extends StatefulWidget {
 
 class _CameraScreenState extends State<CameraScreen> {
   CameraController? _cameraController;
-  final YoloDetector _detector = YoloDetector();
+  final YoloDetector _yoloDetector = YoloDetector();
+  final EdgeDetector _edgeDetector = EdgeDetector();
+  bool _useYolo = false;
   DetectionResult? _currentDetection;
   bool _isProcessing = false;
   bool _isCameraReady = false;
@@ -32,7 +35,11 @@ class _CameraScreenState extends State<CameraScreen> {
 
   Future<void> _initialize() async {
     await _requestPermissions();
-    await _detector.loadModel();
+    await _yoloDetector.loadModel();
+    _useYolo = _yoloDetector.isReady;
+    if (!_useYolo) {
+      print('YOLO model not available — using edge-based detection fallback');
+    }
     await _initCamera();
   }
 
@@ -62,9 +69,9 @@ class _CameraScreenState extends State<CameraScreen> {
       _cameraController!.startImageStream(_processFrame);
       setState(() {
         _isCameraReady = true;
-        _statusMessage = _detector.isReady
+        _statusMessage = _useYolo
             ? 'Point at a receipt or document'
-            : 'Model not loaded — using manual capture';
+            : 'Point at a receipt (using edge detection)';
       });
     } catch (e) {
       setState(() => _statusMessage = 'Camera error: $e');
@@ -72,7 +79,7 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   void _processFrame(CameraImage cameraImage) {
-    if (_isProcessing || !_detector.isReady) return;
+    if (_isProcessing) return;
     _isProcessing = true;
 
     // Convert camera image to img.Image for detection.
@@ -82,14 +89,20 @@ class _CameraScreenState extends State<CameraScreen> {
       return;
     }
 
-    final result = _detector.detect(image);
+    final DetectionResult? result;
+    if (_useYolo) {
+      result = _yoloDetector.detect(image);
+    } else {
+      result = _edgeDetector.detect(image);
+    }
 
     if (mounted) {
+      final detectorName = _useYolo ? 'YOLO' : 'Edge';
       setState(() {
         _currentDetection = result;
         if (result != null && result.isValid) {
           _statusMessage =
-              'Document detected (${(result.confidence * 100).toStringAsFixed(0)}%)';
+              'Document detected — $detectorName (${(result.confidence * 100).toStringAsFixed(0)}%)';
         } else {
           _statusMessage = 'Searching for document...';
         }
@@ -171,7 +184,8 @@ class _CameraScreenState extends State<CameraScreen> {
 
       // Step 4: Crop or pass through.
       if (_currentDetection != null && _currentDetection!.isValid) {
-        debugLog.writeln('[Step 4] Detection available:');
+        final detectorName = _useYolo ? 'YOLOv8' : 'Edge Detection';
+        debugLog.writeln('[Step 4] Detection available ($detectorName):');
         debugLog.writeln('  Confidence: '
             '${(_currentDetection!.confidence * 100).toStringAsFixed(1)}%');
         debugLog.writeln('  Corners (normalized): '
@@ -207,6 +221,7 @@ class _CameraScreenState extends State<CameraScreen> {
               cropped: croppedImage,
               detection: _currentDetection,
               debugLog: debugLog.toString(),
+              detectorMethod: _useYolo ? 'YOLOv8' : 'Edge Detection',
             ),
           ),
         ).then((_) {
@@ -234,7 +249,7 @@ class _CameraScreenState extends State<CameraScreen> {
   @override
   void dispose() {
     _cameraController?.dispose();
-    _detector.dispose();
+    _yoloDetector.dispose();
     super.dispose();
   }
 
