@@ -41,9 +41,14 @@ class YoloDetector {
       final outputShape = _interpreter!.getOutputTensor(0).shape;
       print('  Input shape:  $inputShape');
       print('  Output shape: $outputShape');
-    } catch (e) {
+    } catch (e, stack) {
       print('Failed to load YOLOv8 model: $e');
-      print('Make sure yolov8_doc_detector.tflite is in assets/models/');
+      print('Stack trace: $stack');
+      print('Make sure:');
+      print('  1. yolov8_doc_detector.tflite is in assets/models/');
+      print('  2. assets/models/ is declared in pubspec.yaml');
+      print('  3. Android minSdk >= 26 (required by tflite_flutter)');
+      print('  4. You ran flutter clean && flutter pub get after adding the model');
       _isReady = false;
     }
   }
