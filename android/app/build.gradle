@@ -44,7 +44,7 @@ android {
 
     defaultConfig {
         applicationId "com.example.receipt_scanner"
-        minSdk 24
+        minSdk 26
         targetSdk 34
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName

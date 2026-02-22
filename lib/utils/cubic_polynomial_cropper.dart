@@ -25,7 +25,12 @@ class CubicPolynomialCropper {
     int? outputWidth,
     int? outputHeight,
   }) {
-    final corners = detection.corners;
+    // Scale normalized (0-1) detection corners to source image pixel coordinates.
+    final scaled = detection.scaleToImage(
+      image.width.toDouble(),
+      image.height.toDouble(),
+    );
+    final corners = scaled.corners;
 
     // Estimate output dimensions from the quadrilateral if not specified.
     final widthTop = _distance(corners[0], corners[1]);
@@ -62,8 +67,8 @@ class CubicPolynomialCropper {
         final srcY = _evaluateCubic(coeffsY, u, v);
 
         // Bicubic pixel sampling from source image.
-        final pixel = _bicubicSample(image, srcX, srcY);
-        result.setPixel(x, y, pixel);
+        final rgb = _bicubicSample(image, srcX, srcY);
+        result.setPixelRgb(x, y, rgb[0], rgb[1], rgb[2]);
       }
     }
 
@@ -114,12 +119,14 @@ class CubicPolynomialCropper {
   }
 
   /// Bicubic pixel interpolation for smooth subpixel sampling.
-  static img.Pixel _bicubicSample(img.Image image, double x, double y) {
+  /// Returns RGB values as a list [r, g, b] to avoid mutating the source image.
+  static List<int> _bicubicSample(img.Image image, double x, double y) {
     final ix = x.floor().clamp(0, image.width - 1);
     final iy = y.floor().clamp(0, image.height - 1);
     // For simplicity, use nearest-neighbor at boundaries, bicubic interior.
     if (ix < 1 || ix >= image.width - 2 || iy < 1 || iy >= image.height - 2) {
-      return image.getPixel(ix, iy);
+      final pixel = image.getPixel(ix, iy);
+      return [pixel.r.toInt(), pixel.g.toInt(), pixel.b.toInt()];
     }
 
     final fx = x - ix;
@@ -140,12 +147,11 @@ class CubicPolynomialCropper {
       }
     }
 
-    final result = image.getPixel(ix, iy);
-    result
-      ..r = r.round().clamp(0, 255).toInt()
-      ..g = g.round().clamp(0, 255).toInt()
-      ..b = b.round().clamp(0, 255).toInt();
-    return result;
+    return [
+      r.round().clamp(0, 255),
+      g.round().clamp(0, 255),
+      b.round().clamp(0, 255),
+    ];
   }
 
   /// Mitchell-Netravali cubic kernel (B=1/3, C=1/3).

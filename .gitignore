@@ -26,6 +26,9 @@ local.properties
 *.log
 pubspec.lock
 
-# TFLite models (large binary files - add your own)
-# Uncomment below if you want to track models in git:
-# !assets/models/*.tflite
+# Model export intermediates
+tools/*.onnx
+tools/*.onnx.data
+tools/saved_model/
+*.pt
+calibration_image_sample_data*

@@ -11,12 +11,16 @@ class ResultScreen extends StatelessWidget {
   final img.Image original;
   final img.Image cropped;
   final DetectionResult? detection;
+  final String? debugLog;
+  final String detectorMethod;
 
   const ResultScreen({
     super.key,
     required this.original,
     required this.cropped,
     this.detection,
+    this.debugLog,
+    this.detectorMethod = 'Unknown',
   });
 
   Uint8List _encodeImage(img.Image image) {
@@ -95,7 +99,11 @@ class ResultScreen extends StatelessWidget {
                       const SizedBox(height: 8),
                       Text(
                           'Confidence: ${(detection!.confidence * 100).toStringAsFixed(1)}%'),
-                      Text('Method: YOLOv8 + Cubic Polynomial'),
+                      Text('Method: $detectorMethod + Cubic Polynomial'),
+                      Text(
+                          'Original: ${original.width}x${original.height}'),
+                      Text(
+                          'Cropped: ${cropped.width}x${cropped.height}'),
                     ],
                   ),
                 ),
@@ -127,6 +135,28 @@ class ResultScreen extends StatelessWidget {
                 fit: BoxFit.contain,
               ),
             ),
+            if (debugLog != null) ...[
+              const SizedBox(height: 24),
+              Text(
+                'Processing Steps',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Card(
+                color: Colors.grey[900],
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: SelectableText(
+                    debugLog!,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      color: Colors.greenAccent,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),

@@ -1,19 +1,31 @@
+import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui';
 import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
 import '../models/detection_result.dart';
 
-/// Runs YOLOv8 document detection on a camera frame.
+/// Runs YOLOv8-OBB document detection on a camera frame.
 ///
-/// Expects a YOLOv8 model trained for document/receipt detection, exported to
-/// TFLite format. The model should output bounding-box corners (4 points) plus
-/// a confidence score.
+/// Uses a YOLOv8n-OBB (Oriented Bounding Box) model exported to TFLite.
 ///
-/// Place your model at: assets/models/yolov8_doc_detector.tflite
+/// Model I/O:
+///   Input:  [1, 640, 640, 3] - NHWC float32, RGB normalized to 0-1
+///   Output: [1, 20, 8400]    - raw OBB detections
+///
+/// Each of the 8400 anchors has 20 values:
+///   [0:4]   x_center, y_center, width, height (in pixel space, 0-640)
+///   [4:19]  15 class scores (raw logits — apply sigmoid)
+///   [19]    rotation angle (radians)
+///
+/// Post-processing converts (x, y, w, h, angle) to 4 corner points
+/// via rotation, then normalizes to 0-1 for resolution independence.
 class YoloDetector {
   static const String _modelPath = 'assets/models/yolov8_doc_detector.tflite';
   static const int inputSize = 640;
+
+  /// Minimum sigmoid(class_score) to consider a detection.
+  static const double _confThreshold = 0.25;
 
   Interpreter? _interpreter;
   bool _isReady = false;
@@ -24,10 +36,19 @@ class YoloDetector {
     try {
       _interpreter = await Interpreter.fromAsset(_modelPath);
       _isReady = true;
-      print('YOLOv8 document detector loaded successfully');
-    } catch (e) {
+      print('YOLOv8-OBB document detector loaded successfully');
+      final inputShape = _interpreter!.getInputTensor(0).shape;
+      final outputShape = _interpreter!.getOutputTensor(0).shape;
+      print('  Input shape:  $inputShape');
+      print('  Output shape: $outputShape');
+    } catch (e, stack) {
       print('Failed to load YOLOv8 model: $e');
-      print('Make sure yolov8_doc_detector.tflite is in assets/models/');
+      print('Stack trace: $stack');
+      print('Make sure:');
+      print('  1. yolov8_doc_detector.tflite is in assets/models/');
+      print('  2. assets/models/ is declared in pubspec.yaml');
+      print('  3. Android minSdk >= 26 (required by tflite_flutter)');
+      print('  4. You ran flutter clean && flutter pub get after adding the model');
       _isReady = false;
     }
   }
@@ -36,23 +57,22 @@ class YoloDetector {
   DetectionResult? detect(img.Image image) {
     if (!_isReady || _interpreter == null) return null;
 
-    final inputImage = img.copyResize(image, width: inputSize, height: inputSize);
-    final input = _imageToFloat32(inputImage);
+    final inputImage =
+        img.copyResize(image, width: inputSize, height: inputSize);
+    final input = _imageToFloat32NHWC(inputImage);
 
-    // YOLOv8 output shape varies by model config. A typical document detection
-    // model outputs [1, N, 9] where each detection has:
-    //   [x1, y1, x2, y2, x3, y3, x4, y4, confidence]
-    // Adjust the output shape to match your specific model.
+    // Output: [1, 20, 8400]
     final outputShape = _interpreter!.getOutputTensor(0).shape;
     final outputSize = outputShape.reduce((a, b) => a * b);
     final output = List.filled(outputSize, 0.0).reshape(outputShape);
 
     _interpreter!.run(input, output);
 
-    return _parseOutput(output, image.width.toDouble(), image.height.toDouble());
+    return _parseOBBOutput(output);
   }
 
-  Float32List _imageToFloat32(img.Image image) {
+  /// Converts image to Float32 in NHWC format [1, H, W, 3] normalized to 0-1.
+  Float32List _imageToFloat32NHWC(img.Image image) {
     final buffer = Float32List(1 * inputSize * inputSize * 3);
     int idx = 0;
     for (int y = 0; y < inputSize; y++) {
@@ -66,42 +86,97 @@ class YoloDetector {
     return buffer;
   }
 
-  DetectionResult? _parseOutput(
-      dynamic output, double origWidth, double origHeight) {
-    // This parsing logic should be adapted to your specific YOLOv8 model output
-    // format. Below is a common layout for a 4-corner document detector.
-    //
-    // The model is expected to output normalized coordinates (0-1).
-    // We find the detection with the highest confidence.
-
+  /// Parses [1, 20, 8400] OBB output into corner-based DetectionResult.
+  ///
+  /// For each anchor, extracts (x, y, w, h, best_class_score, angle),
+  /// converts to 4 rotated corner points, and returns the highest-confidence
+  /// detection with normalized (0-1) coordinates.
+  DetectionResult? _parseOBBOutput(dynamic output) {
     try {
-      final detections = output[0] as List;
+      // output[0] is [20, 8400]: 20 channels, 8400 anchors
+      final channels = output[0] as List;
+      final numAnchors = (channels[0] as List).length;
+      final numChannels = channels.length;
+
       double bestConf = 0;
       DetectionResult? bestResult;
 
-      for (final det in detections) {
-        final d = det as List<double>;
-        if (d.length < 9) continue;
+      for (int a = 0; a < numAnchors; a++) {
+        // Extract bbox params (in pixel space, 0-640)
+        final cx = (channels[0] as List)[a] as double;
+        final cy = (channels[1] as List)[a] as double;
+        final w = (channels[2] as List)[a] as double;
+        final h = (channels[3] as List)[a] as double;
 
-        final confidence = d[8];
-        if (confidence <= bestConf) continue;
+        // Find best class score among channels 4..18 (15 DOTA classes)
+        double bestClassScore = -1e9;
+        for (int c = 4; c < numChannels - 1; c++) {
+          final score = (channels[c] as List)[a] as double;
+          if (score > bestClassScore) bestClassScore = score;
+        }
 
-        bestConf = confidence;
-        bestResult = DetectionResult(
-          topLeft: Offset(d[0] * origWidth, d[1] * origHeight),
-          topRight: Offset(d[2] * origWidth, d[3] * origHeight),
-          bottomRight: Offset(d[4] * origWidth, d[5] * origHeight),
-          bottomLeft: Offset(d[6] * origWidth, d[7] * origHeight),
-          confidence: confidence,
-        );
+        // Apply sigmoid to get probability
+        final confidence = _sigmoid(bestClassScore);
+        if (confidence < _confThreshold) continue;
+
+        // Rotation angle (last channel)
+        final angle = (channels[numChannels - 1] as List)[a] as double;
+
+        // Convert (cx, cy, w, h, angle) to 4 corner points
+        final corners = _xywhrToCorners(cx, cy, w, h, angle);
+
+        // Normalize corners to 0-1
+        final norm = corners.map((p) =>
+            Offset(p.dx / inputSize, p.dy / inputSize)).toList();
+
+        if (confidence > bestConf) {
+          bestConf = confidence;
+          bestResult = DetectionResult(
+            topLeft: norm[0],
+            topRight: norm[1],
+            bottomRight: norm[2],
+            bottomLeft: norm[3],
+            confidence: confidence,
+          );
+        }
       }
 
       return bestResult;
     } catch (e) {
-      print('Error parsing YOLOv8 output: $e');
+      print('Error parsing YOLOv8-OBB output: $e');
       return null;
     }
   }
+
+  /// Converts an oriented bounding box (cx, cy, w, h, angle) to 4 corner points.
+  ///
+  /// Returns corners in order: top-left, top-right, bottom-right, bottom-left
+  /// (relative to the rotated rectangle).
+  static List<Offset> _xywhrToCorners(
+      double cx, double cy, double w, double h, double angle) {
+    final cosA = cos(angle);
+    final sinA = sin(angle);
+
+    // Half-dimensions
+    final hw = w / 2;
+    final hh = h / 2;
+
+    // Corner offsets before rotation (relative to center)
+    final offsets = [
+      [-hw, -hh], // top-left
+      [hw, -hh],  // top-right
+      [hw, hh],   // bottom-right
+      [-hw, hh],  // bottom-left
+    ];
+
+    return offsets.map((o) {
+      final rx = o[0] * cosA - o[1] * sinA;
+      final ry = o[0] * sinA + o[1] * cosA;
+      return Offset(cx + rx, cy + ry);
+    }).toList();
+  }
+
+  static double _sigmoid(double x) => 1.0 / (1.0 + exp(-x));
 
   void dispose() {
     _interpreter?.close();
